@@ -1,0 +1,165 @@
+# ---------------------------------------------------------------------------
+# 01-repro-silent-success.yml
+#
+# Reproduces the customer's symptom:
+#   * JFrogBuildPromotion task says
+#       [Info] Promoted build <name>/<number> to: <target> repository.
+#       Artifactory response: 200
+#   * Yet the artifact never appears in <target>.
+#   * A later JFrogGenericArtifacts Download task fails with
+#       [Error] No errors, but also no files affected (fail-no-op flag).
+#
+# Mechanism:
+#   The Upload task is deliberately run with collectBuildInfo=false, so the
+#   uploaded zip is NOT tracked against the build. JFrogPublishBuildInfo
+#   then publishes an EMPTY build-info (modules[*].artifacts == []).
+#   Build promote iterates over that empty artifact list and returns 200 OK
+#   with messages: [] — i.e. "Promoted successfully" with zero files moved.
+#
+# This mirrors what happens in the customer's pipeline when their upload
+# step is not properly tied to the same buildName/buildNumber that the
+# promote step references.
+# ---------------------------------------------------------------------------
+
+trigger: none
+pr: none
+
+parameters:
+  - name: artifactoryConnection
+    displayName: 'Artifactory service connection name'
+    type: string
+    default: 'rcm-artifactory-service'
+  - name: sourceRepo
+    displayName: 'Source (dev/staging) generic repo'
+    type: string
+    default: 'generic-dev'
+  - name: targetRepo
+    displayName: 'Target (release) generic repo'
+    type: string
+    default: 'generic-release'
+  - name: buildName
+    displayName: 'Build name'
+    type: string
+    default: 'demo/jfrog-promotion-repro'
+  - name: artifactVersion
+    displayName: 'Artifact version'
+    type: string
+    default: '3.4.1'
+
+variables:
+  buildVersion: ${{ parameters.artifactVersion }}-$(Build.BuildId)
+  artifactName: rcm-operations-${{ parameters.artifactVersion }}.zip
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+
+# ===========================================================================
+# Stage 1: produce the broken state — empty build-info published in Artifactory
+# ===========================================================================
+- stage: Build_And_Publish_Empty_BuildInfo
+  displayName: 'Build & publish (intentionally broken)'
+  jobs:
+    - job: build
+      displayName: 'Generate zip, upload WITHOUT build association, publish empty build-info'
+      steps:
+
+        - task: PowerShell@2
+          displayName: 'Create sample zip'
+          inputs:
+            filePath: 'scripts/make-sample-zip.ps1'
+            arguments: '-Version ${{ parameters.artifactVersion }} -OutDir "$(Build.ArtifactStagingDirectory)"'
+            pwsh: true
+
+        # ---- The BUG-INDUCING upload --------------------------------------
+        # collectBuildInfo is deliberately false. The zip lands in the
+        # source repo, but is not associated with any build-info partial
+        # on disk. This is the exact failure mode when an upload step in
+        # the customer's pipeline omits the build association.
+        # -------------------------------------------------------------------
+        - task: JFrogGenericArtifacts@1
+          displayName: 'Upload zip to ${{ parameters.sourceRepo }} (NOT tied to build)'
+          inputs:
+            command: 'Upload'
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            specSource: 'taskConfiguration'
+            fileSpec: |
+              {
+                "files": [
+                  {
+                    "pattern": "$(Build.ArtifactStagingDirectory)/$(artifactName)",
+                    "target": "${{ parameters.sourceRepo }}/${{ parameters.buildName }}/"
+                  }
+                ]
+              }
+            collectBuildInfo: false   # <-- the silent-success trigger
+            failNoOp: true
+
+        # ---- Publish an EMPTY build-info ---------------------------------
+        # No upload partial exists for this build, so this publishes a
+        # build-info JSON with modules[*].artifacts == [].
+        # -------------------------------------------------------------------
+        - task: JFrogPublishBuildInfo@1
+          displayName: 'Publish (empty) build-info'
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            buildName: ${{ parameters.buildName }}
+            buildNumber: $(buildVersion)
+
+        - powershell: |
+            Write-Host "Sanity check: dumping published build-info from Artifactory."
+            Write-Host "It will show artifacts: [] for every module — that IS the bug."
+          displayName: 'Note: build-info now has zero artifacts'
+
+# ===========================================================================
+# Stage 2: the customer's promote task, verbatim. It will report success.
+# ===========================================================================
+- stage: Promote
+  displayName: 'Promote (reproduces silent success)'
+  dependsOn: Build_And_Publish_Empty_BuildInfo
+  jobs:
+    - job: promote
+      displayName: 'Build promote — will log success despite zero files moved'
+      steps:
+        - task: JFrogBuildPromotion@1
+          displayName: 'Promote artifact. The error message "Error occurred while copying: null" appears if the artifact has already been promoted.'
+          continueOnError: true   # mirrors customer's YAML — hides the real failure
+          env:
+            JFROG_CLI_LOG_LEVEL: DEBUG
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            buildName: ${{ parameters.buildName }}
+            buildNumber: $(buildVersion)
+            targetRepo: ${{ parameters.targetRepo }}
+            status: release
+            includeDependencies: false
+            copy: true
+
+# ===========================================================================
+# Stage 3: simulate the production release pipeline downloading from target
+# ===========================================================================
+- stage: Download_From_Target
+  displayName: 'Download from release repo (expected to fail)'
+  dependsOn: Promote
+  jobs:
+    - job: download
+      displayName: 'Download promoted zip — fails with fail-no-op'
+      steps:
+        - task: JFrogGenericArtifacts@1
+          displayName: 'Download build artifact from ${{ parameters.targetRepo }}'
+          inputs:
+            command: 'Download'
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            specSource: 'taskConfiguration'
+            fileSpec: |
+              {
+                "files": [
+                  {
+                    "pattern": "${{ parameters.targetRepo }}/${{ parameters.buildName }}/$(artifactName)",
+                    "target": "$(Pipeline.Workspace)/downloads/"
+                  }
+                ]
+              }
+            collectBuildInfo: false
+            failNoOp: true   # surfaces the silent miss as a real failure

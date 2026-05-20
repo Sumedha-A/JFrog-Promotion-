@@ -1,0 +1,126 @@
+# ---------------------------------------------------------------------------
+# 03-repro-cli-direct.yml
+#
+# Same silent-success reproduction as 01-repro-silent-success.yml, but using
+# the JFrogCliV2@1 generic task — i.e. raw `jf` CLI subcommands routed
+# through the Azure DevOps service connection. This proves the behaviour is
+# in `POST /api/build/promote/...` itself and not specific to the
+# higher-level extension tasks (JFrogGenericArtifacts, JFrogPublishBuildInfo,
+# JFrogBuildPromotion).
+#
+# The CLI version is pinned to the version observed in the customer's
+# debug log (2.100.0). Override via the jfrogCliVersion parameter.
+# ---------------------------------------------------------------------------
+
+trigger: none
+pr: none
+
+parameters:
+  - name: artifactoryConnection
+    displayName: 'Artifactory service connection name (JFrog Platform)'
+    type: string
+    default: 'rcm-artifactory-service'
+  - name: sourceRepo
+    type: string
+    default: 'generic-dev'
+  - name: targetRepo
+    type: string
+    default: 'generic-release'
+  - name: buildName
+    type: string
+    default: 'demo/jfrog-promotion-cli-repro'
+  - name: artifactVersion
+    type: string
+    default: '3.4.1'
+  - name: jfrogCliVersion
+    displayName: 'JFrog CLI version to pin (matches customer debug log)'
+    type: string
+    default: '2.100.0'
+
+variables:
+  buildVersion: ${{ parameters.artifactVersion }}-$(Build.BuildId)
+  artifactName: rcm-operations-${{ parameters.artifactVersion }}.zip
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+- stage: Repro_Direct_CLI
+  displayName: 'Reproduce silent success via raw jf CLI'
+  jobs:
+    - job: repro
+      steps:
+
+        - task: PowerShell@2
+          displayName: 'Create sample zip'
+          inputs:
+            filePath: 'scripts/make-sample-zip.ps1'
+            arguments: '-Version ${{ parameters.artifactVersion }} -OutDir "$(Build.ArtifactStagingDirectory)"'
+            pwsh: true
+
+        - task: JFrogToolsInstaller@1
+          displayName: 'Install pinned JFrog CLI ${{ parameters.jfrogCliVersion }}'
+          inputs:
+            version: ${{ parameters.jfrogCliVersion }}
+
+        # ---- BUG-INDUCING upload --------------------------------------
+        # Note: NO --build-name / --build-number flags. The zip lands in
+        # the source repo but isn't tied to any build, so the upcoming
+        # build-publish will create an empty build-info.
+        # ---------------------------------------------------------------
+        - task: JFrogCliV2@1
+          displayName: 'jf rt upload (without --build-name) — induces empty build-info'
+          env:
+            JFROG_CLI_LOG_LEVEL: DEBUG
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            command: |
+              rt upload "$(Build.ArtifactStagingDirectory)\$(artifactName)" "${{ parameters.sourceRepo }}/${{ parameters.buildName }}/" --flat=true
+
+        - task: JFrogCliV2@1
+          displayName: 'jf rt build-publish (publishes empty build-info)'
+          env:
+            JFROG_CLI_LOG_LEVEL: DEBUG
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            command: |
+              rt build-publish "${{ parameters.buildName }}" "$(buildVersion)"
+
+        # The classic silent-success: 200 OK, "Promoted ... to: <target>",
+        # zero artifacts actually moved.
+        - task: JFrogCliV2@1
+          displayName: 'jf rt build-promote — logs success despite zero files moved'
+          env:
+            JFROG_CLI_LOG_LEVEL: DEBUG
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            command: |
+              rt build-promote "${{ parameters.buildName }}" "$(buildVersion)" "${{ parameters.targetRepo }}" --status=release --copy=true --include-dependencies=false --fail-fast=true
+
+        # Prove it: search the target repo for our supposedly-promoted file.
+        # It should return 0 results. --fail-no-op makes the task itself fail.
+        - task: JFrogCliV2@1
+          displayName: 'jf rt search target repo — proves artifact is absent'
+          continueOnError: true   # we WANT to see this fail to prove the bug
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            command: |
+              rt search "${{ parameters.targetRepo }}/${{ parameters.buildName }}/$(artifactName)" --fail-no-op=true
+
+        - task: JFrogCliV2@1
+          displayName: 'jf rt download from target — fails with fail-no-op'
+          continueOnError: true
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            command: |
+              rt download "${{ parameters.targetRepo }}/${{ parameters.buildName }}/$(artifactName)" "$(Pipeline.Workspace)/downloads/" --fail-no-op=true
+
+        - powershell: |
+            Write-Host "----------------------------------------"
+            Write-Host "REPRO SUMMARY"
+            Write-Host "----------------------------------------"
+            Write-Host "Build promote logged success ('Promoted build ... to: ${{ parameters.targetRepo }} repository.')"
+            Write-Host "But the rt search / rt download steps above show the artifact is not present."
+            Write-Host "This is RTFACT-26868 — build-promote silently does nothing when the build-info"
+            Write-Host "has zero artifacts, because the upload was not tied to the build-name/build-number."
+          displayName: 'Print repro summary'

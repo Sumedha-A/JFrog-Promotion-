@@ -1,0 +1,167 @@
+# ---------------------------------------------------------------------------
+# 02-fixed-promote.yml
+#
+# Same end-to-end flow as 01-repro-silent-success.yml, but corrected so
+# that the artifact is actually promoted to the target repo.
+#
+# Differences from the repro pipeline:
+#   1. The Upload task sets collectBuildInfo: true with the SAME
+#      buildName/buildNumber that the promote step later uses.
+#   2. JFrogPublishBuildInfo runs on the same job/agent immediately after
+#      the upload, so build-info partials are still on disk.
+#   3. The promote step:
+#        - sets an explicit sourceRepo (deterministic behaviour)
+#        - sets failFast: true
+#        - REMOVES continueOnError: true (so silent failures cannot slip
+#          through to production)
+#   4. After promote, a post-promote 'jf rt search' assertion fails the
+#      stage if the artifact isn't physically present in the target repo.
+# ---------------------------------------------------------------------------
+
+trigger: none
+pr: none
+
+parameters:
+  - name: artifactoryConnection
+    displayName: 'Artifactory service connection name'
+    type: string
+    default: 'rcm-artifactory-service'
+  - name: sourceRepo
+    displayName: 'Source (dev/staging) generic repo'
+    type: string
+    default: 'generic-dev'
+  - name: targetRepo
+    displayName: 'Target (release) generic repo'
+    type: string
+    default: 'generic-release'
+  - name: buildName
+    displayName: 'Build name'
+    type: string
+    default: 'demo/jfrog-promotion-fixed'
+  - name: artifactVersion
+    displayName: 'Artifact version'
+    type: string
+    default: '3.4.1'
+
+variables:
+  buildVersion: ${{ parameters.artifactVersion }}-$(Build.BuildId)
+  artifactName: rcm-operations-${{ parameters.artifactVersion }}.zip
+  targetPath: ${{ parameters.buildName }}/$(artifactName)
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+
+# ===========================================================================
+# Stage 1: build, upload (build-associated) and publish build-info
+# ===========================================================================
+- stage: Build_And_Publish
+  displayName: 'Build & publish (correctly tied to build-info)'
+  jobs:
+    - job: build
+      displayName: 'Generate zip, upload WITH build association, publish build-info'
+      steps:
+
+        - task: PowerShell@2
+          displayName: 'Create sample zip'
+          inputs:
+            filePath: 'scripts/make-sample-zip.ps1'
+            arguments: '-Version ${{ parameters.artifactVersion }} -OutDir "$(Build.ArtifactStagingDirectory)"'
+            pwsh: true
+
+        - task: JFrogGenericArtifacts@1
+          displayName: 'Upload zip to ${{ parameters.sourceRepo }} (tied to build)'
+          inputs:
+            command: 'Upload'
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            specSource: 'taskConfiguration'
+            fileSpec: |
+              {
+                "files": [
+                  {
+                    "pattern": "$(Build.ArtifactStagingDirectory)/$(artifactName)",
+                    "target": "${{ parameters.sourceRepo }}/${{ parameters.buildName }}/"
+                  }
+                ]
+              }
+            collectBuildInfo: true
+            buildName: ${{ parameters.buildName }}
+            buildNumber: $(buildVersion)
+            failNoOp: true
+
+        - task: JFrogPublishBuildInfo@1
+          displayName: 'Publish build-info (now contains the uploaded artifact)'
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            buildName: ${{ parameters.buildName }}
+            buildNumber: $(buildVersion)
+
+# ===========================================================================
+# Stage 2: actual promote, with failFast and explicit sourceRepo
+# ===========================================================================
+- stage: Promote
+  displayName: 'Promote (real, with failFast)'
+  dependsOn: Build_And_Publish
+  jobs:
+    - job: promote
+      displayName: 'Build promote — will actually copy the artifact'
+      steps:
+        - task: JFrogBuildPromotion@1
+          displayName: 'Promote rcm-operations to ${{ parameters.targetRepo }}'
+          env:
+            JFROG_CLI_LOG_LEVEL: DEBUG
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            buildName: ${{ parameters.buildName }}
+            buildNumber: $(buildVersion)
+            sourceRepo: ${{ parameters.sourceRepo }}
+            targetRepo: ${{ parameters.targetRepo }}
+            status: release
+            includeDependencies: false
+            copy: true
+            failFast: true
+
+        # Defensive: confirm the artifact is actually in the target repo
+        # before any downstream release pipeline trusts the green tick.
+        # Uses the generic JFrog CLI task so we don't depend on
+        # JFrogGenericArtifacts supporting a 'Search' command.
+        - task: JFrogCliV2@1
+          displayName: 'Post-promote assertion: artifact present in target'
+          inputs:
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            command: |
+              rt search "${{ parameters.targetRepo }}/$(targetPath)" --fail-no-op=true
+
+# ===========================================================================
+# Stage 3: deploy-style download from the target repo (succeeds)
+# ===========================================================================
+- stage: Download_From_Target
+  displayName: 'Download from release repo (expected to succeed)'
+  dependsOn: Promote
+  jobs:
+    - job: download
+      displayName: 'Download promoted zip from ${{ parameters.targetRepo }}'
+      steps:
+        - task: JFrogGenericArtifacts@1
+          displayName: 'Download build artifact from ${{ parameters.targetRepo }}'
+          inputs:
+            command: 'Download'
+            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            specSource: 'taskConfiguration'
+            fileSpec: |
+              {
+                "files": [
+                  {
+                    "pattern": "${{ parameters.targetRepo }}/$(targetPath)",
+                    "target": "$(Pipeline.Workspace)/downloads/"
+                  }
+                ]
+              }
+            collectBuildInfo: false
+            failNoOp: true
+
+        - powershell: |
+            Get-ChildItem -Recurse "$env:PIPELINE_WORKSPACE/downloads/" |
+              Select-Object FullName, Length
+          displayName: 'List downloaded files'

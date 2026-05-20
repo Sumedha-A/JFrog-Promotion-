@@ -1,0 +1,5 @@
+# Local artifacts produced during pipeline runs
+*.zip
+build-info-*.json
+.jfrog/
+downloads/
