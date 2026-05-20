@@ -22,7 +22,7 @@
 # ---------------------------------------------------------------------------
 
 trigger: none
-pr: none
+
 
 parameters:
   - name: Art
@@ -51,8 +51,7 @@ variables:
   artifactName: rcm-operations-${{ parameters.artifactVersion }}.zip
 
 pool:
-
-  name: 'Ubuntu-VM'
+  name: Ubuntu-VM
 
 stages:
 
@@ -83,7 +82,7 @@ stages:
           displayName: 'Upload zip to ${{ parameters.sourceRepo }} (NOT tied to build)'
           inputs:
             command: 'Upload'
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            connection: 'Art'
             specSource: 'taskConfiguration'
             fileSpec: |
               {
@@ -104,7 +103,7 @@ stages:
         - task: JFrogPublishBuildInfo@1
           displayName: 'Publish (empty) build-info'
           inputs:
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            artifactoryConnection: 'Art'
             buildName: ${{ parameters.buildName }}
             buildNumber: $(buildVersion)
 
@@ -129,7 +128,7 @@ stages:
           env:
             JFROG_CLI_LOG_LEVEL: DEBUG
           inputs:
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            artifactoryConnection: 'Art'
             buildName: ${{ parameters.buildName }}
             buildNumber: $(buildVersion)
             targetRepo: ${{ parameters.targetRepo }}
@@ -163,7 +162,7 @@ stages:
           displayName: 'Download build artifact from ${{ parameters.targetRepo }}'
           inputs:
             command: 'Download'
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            connection: 'Art'
             specSource: 'taskConfiguration'
             fileSpec: |
               {
@@ -176,4 +175,3 @@ stages:
               }
             collectBuildInfo: false
             failNoOp: true   # surfaces the silent miss as a real failure
-
