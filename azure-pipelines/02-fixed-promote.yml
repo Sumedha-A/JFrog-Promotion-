@@ -132,7 +132,7 @@ stages:
           inputs:
             jfrogPlatformConnection: 'JF-CLI'
             command: |
-              rt search "${{ parameters.targetRepo }}/$(targetPath)" --fail-no-op=true
+              jf rt search "${{ parameters.targetRepo }}/$(targetPath)" --fail-no-op=true
 
 # ===========================================================================
 # Stage 3: deploy-style download from the target repo (succeeds)
