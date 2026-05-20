@@ -48,8 +48,10 @@ variables:
   artifactName: rcm-operations-${{ parameters.artifactVersion }}.zip
   targetPath: ${{ parameters.buildName }}/$(artifactName)
 
+# Self-hosted Linux pool. Replace with your pool name, or switch to a
+# Microsoft-hosted pool, e.g.   pool: { vmImage: 'ubuntu-latest' }
 pool:
-  vmImage: 'windows-latest'
+  name: Ubuntu-VM
 
 stages:
 
@@ -63,12 +65,11 @@ stages:
       displayName: 'Generate zip, upload WITH build association, publish build-info'
       steps:
 
-        - task: PowerShell@2
+        - task: Bash@3
           displayName: 'Create sample zip'
           inputs:
-            filePath: 'scripts/make-sample-zip.ps1'
-            arguments: '-Version ${{ parameters.artifactVersion }} -OutDir "$(Build.ArtifactStagingDirectory)"'
-            pwsh: true
+            filePath: 'scripts/make-sample-zip.sh'
+            arguments: '${{ parameters.artifactVersion }} "$(Build.ArtifactStagingDirectory)"'
 
         - task: JFrogGenericArtifacts@1
           displayName: 'Upload zip to ${{ parameters.sourceRepo }} (tied to build)'
@@ -161,7 +162,7 @@ stages:
             collectBuildInfo: false
             failNoOp: true
 
-        - powershell: |
-            Get-ChildItem -Recurse "$env:PIPELINE_WORKSPACE/downloads/" |
-              Select-Object FullName, Length
+        - bash: |
+            find "$PIPELINE_WORKSPACE/downloads/" -type f -printf '%p\t%s bytes\n' 2>/dev/null \
+              || find "$PIPELINE_WORKSPACE/downloads/" -type f -exec ls -l {} \;
           displayName: 'List downloaded files'

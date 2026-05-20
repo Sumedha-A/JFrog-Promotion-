@@ -41,8 +41,10 @@ variables:
   buildVersion: ${{ parameters.artifactVersion }}-$(Build.BuildId)
   artifactName: rcm-operations-${{ parameters.artifactVersion }}.zip
 
+# Self-hosted Linux pool. Replace with your pool name, or switch to a
+# Microsoft-hosted pool, e.g.   pool: { vmImage: 'ubuntu-latest' }
 pool:
-  vmImage: 'windows-latest'
+  name: Ubuntu-VM
 
 stages:
 - stage: Repro_Direct_CLI
@@ -51,12 +53,11 @@ stages:
     - job: repro
       steps:
 
-        - task: PowerShell@2
+        - task: Bash@3
           displayName: 'Create sample zip'
           inputs:
-            filePath: 'scripts/make-sample-zip.ps1'
-            arguments: '-Version ${{ parameters.artifactVersion }} -OutDir "$(Build.ArtifactStagingDirectory)"'
-            pwsh: true
+            filePath: 'scripts/make-sample-zip.sh'
+            arguments: '${{ parameters.artifactVersion }} "$(Build.ArtifactStagingDirectory)"'
 
         - task: JFrogToolsInstaller@1
           displayName: 'Install pinned JFrog CLI ${{ parameters.jfrogCliVersion }}'
@@ -75,7 +76,7 @@ stages:
           inputs:
             artifactoryConnection: ${{ parameters.artifactoryConnection }}
             command: |
-              rt upload "$(Build.ArtifactStagingDirectory)\$(artifactName)" "${{ parameters.sourceRepo }}/${{ parameters.buildName }}/" --flat=true
+              rt upload "$(Build.ArtifactStagingDirectory)/$(artifactName)" "${{ parameters.sourceRepo }}/${{ parameters.buildName }}/" --flat=true
 
         - task: JFrogCliV2@1
           displayName: 'jf rt build-publish (publishes empty build-info)'
@@ -115,12 +116,12 @@ stages:
             command: |
               rt download "${{ parameters.targetRepo }}/${{ parameters.buildName }}/$(artifactName)" "$(Pipeline.Workspace)/downloads/" --fail-no-op=true
 
-        - powershell: |
-            Write-Host "----------------------------------------"
-            Write-Host "REPRO SUMMARY"
-            Write-Host "----------------------------------------"
-            Write-Host "Build promote logged success ('Promoted build ... to: ${{ parameters.targetRepo }} repository.')"
-            Write-Host "But the rt search / rt download steps above show the artifact is not present."
-            Write-Host "This is RTFACT-26868 — build-promote silently does nothing when the build-info"
-            Write-Host "has zero artifacts, because the upload was not tied to the build-name/build-number."
+        - bash: |
+            echo "----------------------------------------"
+            echo "REPRO SUMMARY"
+            echo "----------------------------------------"
+            echo "Build promote logged success ('Promoted build ... to: ${{ parameters.targetRepo }} repository.')"
+            echo "But the rt search / rt download steps above show the artifact is not present."
+            echo "This is RTFACT-26868 - build-promote silently does nothing when the build-info"
+            echo "has zero artifacts, because the upload was not tied to the build-name/build-number."
           displayName: 'Print repro summary'

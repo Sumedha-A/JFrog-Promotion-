@@ -43,11 +43,30 @@ References:
 │   ├── 02-fixed-promote.yml          # correct end-to-end promote
 │   └── 03-repro-cli-direct.yml       # repro using `jf` CLI directly
 ├── scripts/
-│   └── make-sample-zip.ps1           # creates a tiny zip at runtime
+│   ├── make-sample-zip.sh            # Linux/Bash sample-zip generator (used by pipelines)
+│   └── make-sample-zip.ps1           # Windows/PowerShell equivalent (optional)
 └── README.md
 ```
 
 No binaries are committed — the sample zip is generated inside the pipeline.
+
+### Agent pool
+
+All three pipelines default to a self-hosted Linux pool named `Ubuntu-VM`.
+To run on a Microsoft-hosted Linux agent instead, change the `pool:` block
+at the top of each YAML file to:
+
+```yaml
+pool:
+  vmImage: 'ubuntu-latest'
+```
+
+The zip-creation step uses `Bash@3` + `scripts/make-sample-zip.sh`, which
+relies on the `zip` utility (present by default on every Microsoft-hosted
+Linux image and on most self-hosted Ubuntu agents — install with
+`sudo apt-get install -y zip` if missing). The PowerShell
+`scripts/make-sample-zip.ps1` is kept only for reference if you want to
+switch to a Windows agent.
 
 ---
 

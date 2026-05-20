@@ -65,12 +65,14 @@ stages:
       displayName: 'Generate zip, upload WITHOUT build association, publish empty build-info'
       steps:
 
-        - task: PowerShell@2
+        # Linux-friendly equivalent of the PowerShell version.
+        # The Ubuntu-VM agent pool does not have pwsh installed,
+        # so we use Bash and the `zip` utility (universal on Linux).
+        - task: Bash@3
           displayName: 'Create sample zip'
           inputs:
-            filePath: 'scripts/make-sample-zip.ps1'
-            arguments: '-Version ${{ parameters.artifactVersion }} -OutDir "$(Build.ArtifactStagingDirectory)"'
-            pwsh: true
+            filePath: 'scripts/make-sample-zip.sh'
+            arguments: '${{ parameters.artifactVersion }} "$(Build.ArtifactStagingDirectory)"'
 
         # ---- The BUG-INDUCING upload --------------------------------------
         # collectBuildInfo is deliberately false. The zip lands in the
@@ -107,9 +109,9 @@ stages:
             buildName: ${{ parameters.buildName }}
             buildNumber: $(buildVersion)
 
-        - powershell: |
-            Write-Host "Sanity check: dumping published build-info from Artifactory."
-            Write-Host "It will show artifacts: [] for every module — that IS the bug."
+        - bash: |
+            echo "Sanity check: dumping published build-info from Artifactory."
+            echo "It will show artifacts: [] for every module - that IS the bug."
           displayName: 'Note: build-info now has zero artifacts'
 
 # ===========================================================================
