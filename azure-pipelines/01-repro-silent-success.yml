@@ -82,7 +82,7 @@ stages:
           displayName: 'Upload zip to ${{ parameters.sourceRepo }} (NOT tied to build)'
           inputs:
             command: 'Upload'
-            connection: 'Art'
+            connection: 'Yuvi-Instance'
             specSource: 'taskConfiguration'
             fileSpec: |
               {
@@ -103,7 +103,7 @@ stages:
         - task: JFrogPublishBuildInfo@1
           displayName: 'Publish (empty) build-info'
           inputs:
-            artifactoryConnection: 'Art'
+            artifactoryConnection: 'Yuvi-Instance'
             buildName: ${{ parameters.buildName }}
             buildNumber: $(buildVersion)
 
@@ -128,10 +128,11 @@ stages:
           env:
             JFROG_CLI_LOG_LEVEL: DEBUG
           inputs:
-            artifactoryConnection: 'Art'
+            artifactoryConnection: 'Yuvi-Instance'
             buildName: ${{ parameters.buildName }}
             buildNumber: $(buildVersion)
-            targetRepo: ${{ parameters.targetRepo }}
+            targetRepo: '416974-generic-local'
+            sourceRepo: '416974-generic-local-source'
             status: release
             includeDependencies: false
             copy: true
@@ -162,7 +163,7 @@ stages:
           displayName: 'Download build artifact from ${{ parameters.targetRepo }}'
           inputs:
             command: 'Download'
-            connection: 'Art'
+            connection: 'Yuvi-Instance'
             specSource: 'taskConfiguration'
             fileSpec: |
               {
