@@ -25,19 +25,19 @@ parameters:
   - name: artifactoryConnection
     displayName: 'Artifactory service connection name'
     type: string
-    default: 'rcm-artifactory-service'
+    default: 'Yuvi-instance'
   - name: sourceRepo
     displayName: 'Source (dev/staging) generic repo'
     type: string
-    default: 'generic-dev'
+    default: '416974-generic-local-source'
   - name: targetRepo
     displayName: 'Target (release) generic repo'
     type: string
-    default: 'generic-release'
+    default: '416974-generic-local'
   - name: buildName
     displayName: 'Build name'
     type: string
-    default: 'demo/jfrog-promotion-fixed'
+    default: 'demo/jfrog-promotion-repro'
   - name: artifactVersion
     displayName: 'Artifact version'
     type: string
@@ -75,7 +75,7 @@ stages:
           displayName: 'Upload zip to ${{ parameters.sourceRepo }} (tied to build)'
           inputs:
             command: 'Upload'
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            Connection: ${{ parameters.artifactoryConnection }}
             specSource: 'taskConfiguration'
             fileSpec: |
               {
@@ -130,7 +130,7 @@ stages:
         - task: JFrogCliV2@1
           displayName: 'Post-promote assertion: artifact present in target'
           inputs:
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            jfrogPlatformConnection: 'JF-CLI'
             command: |
               rt search "${{ parameters.targetRepo }}/$(targetPath)" --fail-no-op=true
 
@@ -148,7 +148,7 @@ stages:
           displayName: 'Download build artifact from ${{ parameters.targetRepo }}'
           inputs:
             command: 'Download'
-            artifactoryConnection: ${{ parameters.artifactoryConnection }}
+            Connection: ${{ parameters.artifactoryConnection }}
             specSource: 'taskConfiguration'
             fileSpec: |
               {
