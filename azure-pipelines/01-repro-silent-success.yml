@@ -28,15 +28,15 @@ parameters:
   - name: Art
     displayName: 'Artifactory service connection name'
     type: string
-    default: 'rcm-artifactory-service'
+    default: 'Yuvi-instance'
   - name: sourceRepo
     displayName: 'Source (dev/staging) generic repo'
     type: string
-    default: 'generic-dev'
+    default: '416974-generic-local-source'
   - name: targetRepo
     displayName: 'Target (release) generic repo'
     type: string
-    default: 'generic-release'
+    default: '416974-generic-local'
   - name: buildName
     displayName: 'Build name'
     type: string
